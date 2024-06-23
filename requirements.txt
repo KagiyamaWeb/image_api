@@ -1,0 +1,12 @@
+fastapi
+aiohttp
+uvicorn
+sqlalchemy
+psycopg2-binary
+boto3
+Pillow
+websockets
+pytest
+celery
+redis
+aiofiles

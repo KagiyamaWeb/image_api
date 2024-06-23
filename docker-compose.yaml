@@ -1,0 +1,64 @@
+version: '3'
+
+services:
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio
+    command: server /data
+    environment:
+      MINIO_ACCESS_KEY: ${AWS_ACCESS_KEY_ID}
+      MINIO_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY}
+    ports:
+      - "9000:9000"
+    volumes:
+      - minio-data:/data
+
+  app:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - .:/code
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - minio
+      - redis
+    env_file:
+      - .env
+
+  worker:
+    build: .
+    command: celery -A app.celery_worker.celery worker --loglevel=info
+    volumes:
+      - .:/code
+    depends_on:
+      - db
+      - minio
+      - redis
+    env_file:
+      - .env
+
+  minio_init:
+    image: minio/mc
+    depends_on:
+      - minio
+    volumes:
+      - ./create_bucket.sh:/create_bucket.sh
+    entrypoint: ["/bin/sh", "/create_bucket.sh"]
+
+volumes:
+  minio-data:

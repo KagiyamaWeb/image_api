@@ -12,12 +12,6 @@ s3_client = boto3.client(
 BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
 
 def generate_presigned_url(object_name, expiration=3600):
-    """Generate a presigned URL to share an S3 object
-
-    :param object_name: string
-    :param expiration: Time in seconds for the presigned URL to remain valid
-    :return: Presigned URL as string. If error, returns None.
-    """
     try:
         response = s3_client.generate_presigned_url(
             'put_object',
@@ -28,10 +22,9 @@ def generate_presigned_url(object_name, expiration=3600):
     except NoCredentialsError:
         return None
 
-    # The response contains the presigned URL
     return response
 
-def upload_file(file_name, object_name=None):
+async def upload_file(file_name, object_name=None):
     if object_name is None:
         object_name = file_name
 

@@ -1,6 +1,7 @@
 import boto3
 
 from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Form
+from fastapi.websockets import WebSocket, WebSocketDisconnect
 from typing import List
 from sqlalchemy.orm import Session
 from botocore.exceptions import NoCredentialsError
@@ -11,9 +12,39 @@ from app.config import get_db, engine
 from app.s3_utils import generate_presigned_url, upload_file
 from app.tasks import process_image
 
-app = FastAPI()
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
 
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            await connection.send_text(message)
+
+manager = ConnectionManager()
+
+app = FastAPI()
 Base.metadata.create_all(bind=engine)
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await manager.send_personal_message(f"You wrote: {data}", websocket)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
 
 @app.post("/images/", response_model=UploadResponse)
 def create_upload_image(
@@ -25,34 +56,8 @@ def create_upload_image(
     upload_url = generate_presigned_url(filename)
     if not upload_url:
         raise HTTPException(status_code=500, detail="Error generating presigned URL")
-    #return {"image_id": image.id, "upload_link": upload_url}
     return UploadResponse(image_id=image.id, upload_link=upload_url)
 
-@app.post("/upload/{image_id}")
-async def upload_image(
-    image_id: int, 
-    file: UploadFile = File(...), 
-    db: Session = Depends(get_db)
-):
-    image = db.query(ImageModel).filter(ImageModel.id == image_id).first()
-    if not image:
-        raise HTTPException(status_code=404, detail="Image not found")
-    
-    file_location = f"temp_{file.filename}"
-    with open(file_location, "wb") as buffer:
-        buffer.write(file.file.read())
-    
-    success = upload_file(file_location, image.filename)
-    if not success:
-        raise HTTPException(status_code=500, detail="Error uploading file to S3")
-
-    image.state = "uploaded"
-    db.commit()
-
-    # Trigger image processing
-    process_image.delay(image.id)
-
-    return {"info": "File uploaded successfully"}
 
 @app.get("/projects/{project_id}/images", response_model=List[ImageResponse])
 def read_images(project_id: int, db: Session = Depends(get_db)):
